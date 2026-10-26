@@ -1,13 +1,14 @@
-# 🧩 TaskBoard — Semana 12
+# 🌐 TaskBoard — Semana 13
 
 ![Laravel](https://img.shields.io/badge/Laravel-12-red?logo=laravel)
 ![PHP](https://img.shields.io/badge/PHP-8.2-blue?logo=php)
 ![MySQL](https://img.shields.io/badge/MySQL-MariaDB-orange?logo=mysql)
+![API](https://img.shields.io/badge/API-REST-0B2E59)
 ![UPED](https://img.shields.io/badge/UPED-Integración_de_Sistemas-0B2E59)
 
 Proyecto desarrollado para la asignatura **Integración de Sistemas** de la **Universidad Pedagógica de El Salvador (UPED)**.
 
-Durante la Semana 12 se incorporó autenticación de usuarios, manejo de sesiones, protección de rutas y aislamiento de datos por usuario dentro de TaskBoard.
+Durante la Semana 13 se agregó una API REST a TaskBoard para exponer comercios y transacciones mediante respuestas JSON controladas con API Resources.
 
 **Estudiante:** Josthyn Stanley Cruz Vásquez  
 **Carrera:** Ingeniería en Sistemas y Computación  
@@ -18,430 +19,264 @@ Durante la Semana 12 se incorporó autenticación de usuarios, manejo de sesione
 
 ## 🎯 Objetivo de la semana
 
-Implementar un sistema de autenticación con registro, inicio y cierre de sesión, proteger las rutas de la aplicación y garantizar que cada usuario solamente pueda consultar y modificar sus propios comercios y transacciones.
+Construir una API REST para TaskBoard que permita consultar, crear y eliminar datos mediante JSON, utilizando API Resources para controlar la información expuesta y una herramienta de pruebas HTTP para verificar códigos de respuesta, validaciones y filtros.
 
 ---
 
-# 📅 Jueves — Cookies, sesiones y autenticación
+# 🚪 Activación de la API
 
-## 🍪 Cookies y sesiones
+Laravel fue configurado para trabajar con rutas de API mediante:
 
-Se observó el funcionamiento de las cookies generadas por Laravel desde las herramientas del navegador.
+```bash
+php artisan install:api
+```
 
-Cookies verificadas:
-
-- `laravel_session`
-- `XSRF-TOKEN`
-
-También se comprobó que al eliminar la cookie de sesión y recargar la página Laravel genera una nueva sesión.
+Esto habilitó `routes/api.php`, cuyas rutas utilizan automáticamente el prefijo `/api`.
 
 ---
 
-## 👤 Modelo User
+# 🏪 Primer endpoint de comercios
 
-Laravel ya incluía la migración inicial de usuarios y el modelo `User`.
+Se creó inicialmente:
 
-El modelo utiliza:
-
-```php
-protected $fillable = [
-    'name',
-    'email',
-    'password',
-];
+```text
+GET /api/comercios
 ```
 
-Los datos sensibles permanecen ocultos:
+devolviendo directamente los registros del modelo `Comercio`. Esta primera prueba permitió observar que se exponían campos internos como `user_id`, `created_at` y `updated_at`.
 
-```php
-protected $hidden = [
-    'password',
-    'remember_token',
-];
+---
+
+# 🧪 Pruebas con Insomnia
+
+Para verificar la API se utilizó **Insomnia** con peticiones HTTP y el encabezado:
+
+```text
+Accept: application/json
 ```
 
-La contraseña utiliza hash automáticamente:
+Con Insomnia se comprobaron métodos, URLs, encabezados, cuerpos JSON y códigos de respuesta.
+
+---
+
+# 🧩 ComercioResource
+
+Se creó `app/Http/Resources/ComercioResource.php` para controlar los campos públicos:
 
 ```php
-protected function casts(): array
+public function toArray(Request $request): array
 {
     return [
-        'email_verified_at' => 'datetime',
-        'password' => 'hashed',
+        'id' => $this->id,
+        'nombre' => $this->nombre_comercio,
+        'rubro' => $this->rubro,
     ];
 }
 ```
 
+La respuesta pasó a utilizar una estructura controlada dentro de `data`, sin exponer campos internos.
+
 ---
 
-## 🔐 Comprobación del hash
+# 💳 TransaccionResource
 
-Se realizaron pruebas desde Tinker:
+Se creó `app/Http/Resources/TransaccionResource.php`:
 
 ```php
-use Illuminate\Support\Facades\Hash;
-
-$h = Hash::make('secreto123');
-
-Hash::check('secreto123', $h);
-// true
-
-Hash::check('otra', $h);
-// false
-
-Hash::make('secreto123') === $h;
-// false
+public function toArray(Request $request): array
+{
+    return [
+        'id' => $this->id,
+        'cliente' => $this->cliente_nombre,
+        'monto' => (float) $this->monto,
+        'estado' => $this->estado,
+        'fecha' => $this->created_at->toIso8601String(),
+    ];
+}
 ```
 
-Esto permite comprobar que las contraseñas no se almacenan en texto plano.
+El monto se devuelve como número y la fecha en formato ISO 8601.
 
 ---
 
-## 📝 Registro de usuarios
+# 🔗 Relaciones con whenLoaded()
 
-Se creó:
+El detalle de un comercio incluye sus transacciones solamente cuando la relación fue cargada:
+
+```php
+'transacciones' => TransaccionResource::collection(
+    $this->whenLoaded('transacciones')
+),
+```
+
+Por eso `GET /api/comercios` no carga transacciones, mientras `GET /api/comercios/1` sí puede incluirlas.
+
+---
+
+# 🛣️ apiResource para transacciones
+
+Se creó `app/Http/Controllers/Api/TransaccionApiController.php` y se registraron las rutas con:
+
+```php
+Route::apiResource('transacciones', TransaccionApiController::class)
+    ->parameters([
+        'transacciones' => 'transaccion',
+    ]);
+```
+
+La personalización del parámetro permite utilizar correctamente el Route Model Binding.
+
+Las rutas principales son:
 
 ```text
-app/Http/Requests/RegistroRequest.php
+GET      /api/transacciones
+POST     /api/transacciones
+GET      /api/transacciones/{transaccion}
+PUT      /api/transacciones/{transaccion}
+PATCH    /api/transacciones/{transaccion}
+DELETE   /api/transacciones/{transaccion}
 ```
+
+---
+
+# ➕ Crear transacciones por API
+
+Se creó `GuardarTransaccionApiRequest.php` para validar la API sin modificar la seguridad web de Semana 12.
 
 Validaciones principales:
 
 ```php
-'name' => ['required', 'max:255'],
-'email' => ['required', 'email', 'unique:users,email'],
-'password' => ['required', 'min:8', 'confirmed'],
+'comercio_id' => ['required', 'exists:comercios,id'],
+'cliente_nombre' => ['required', 'string', 'min:3', 'max:255'],
+'monto' => ['required', 'numeric', 'min:0.01'],
+'estado' => ['nullable', 'in:Iniciada,Completada,Fallida'],
 ```
 
-Después del registro el usuario inicia sesión automáticamente:
+Una creación válida con `POST /api/transacciones` responde `201 Created`.
 
-```php
-Auth::login($user);
-$request->session()->regenerate();
+---
+
+# ⚠️ Validaciones 422
+
+Una petición inválida responde:
+
+```text
+422 Unprocessable Entity
+```
+
+con un objeto `errors` que indica los campos incorrectos.
+
+---
+
+# 🗑️ Eliminar transacciones
+
+El método `destroy()` elimina una transacción y responde:
+
+```text
+204 No Content
+```
+
+Si se intenta eliminar nuevamente el mismo registro, la API responde:
+
+```text
+404 Not Found
 ```
 
 ---
 
-## 🔑 Login
+# 📡 Importancia de Accept: application/json
 
-El inicio de sesión utiliza:
+Con `Accept: application/json`, una validación incorrecta responde `422` en JSON.
 
-```php
-Auth::attempt($credenciales, $request->boolean('recordar'));
+Sin pedir explícitamente JSON, se comprobó una respuesta:
+
+```text
+302 Found
 ```
 
-Después de autenticarse se regenera la sesión:
-
-```php
-$request->session()->regenerate();
-```
-
-Y se utiliza:
-
-```php
-return redirect()->intended(route('comercios.index'));
-```
-
-para regresar al usuario a la ruta protegida que intentaba visitar.
+lo que demuestra la importancia de indicar el formato esperado por el cliente.
 
 ---
 
-## 🚪 Logout
+# 🔎 Filtro por estado
 
-El cierre de sesión destruye la sesión actual y genera un nuevo token CSRF:
-
-```php
-Auth::logout();
-
-$request->session()->invalidate();
-$request->session()->regenerateToken();
-```
-
----
-
-## 🛡️ Middleware auth y guest
-
-Las rutas de registro e inicio de sesión utilizan:
+Se agregó un parámetro opcional:
 
 ```php
-Route::middleware('guest')->group(function () {
-    // registro y login
-});
-```
-
-Las rutas internas de TaskBoard utilizan:
-
-```php
-Route::middleware('auth')->group(function () {
-    // comercios y transacciones
-});
-```
-
-De esta manera un usuario sin sesión es enviado al login cuando intenta acceder a una ruta protegida.
-
----
-
-## 👋 Barra superior dinámica
-
-El layout principal utiliza Blade para cambiar su contenido dependiendo de la sesión.
-
-```blade
-@auth
-    Hola, {{ Auth::user()->name }}
-@endauth
-
-@guest
-    <a href="{{ route('login') }}">Entrar</a>
-    <a href="{{ route('registro') }}">Registrarse</a>
-@endguest
-```
-
-También se agregó el botón para cerrar sesión.
-
----
-
-## ✅ Pruebas realizadas el jueves
-
-Se verificó correctamente:
-
-- Registro con datos válidos.
-- Bloqueo de correo duplicado.
-- Contraseña mínima de 8 caracteres.
-- Validación de confirmación de contraseña.
-- Login con credenciales incorrectas.
-- Login correcto y redirección `intended`.
-- Redirección de `/comercios` hacia `/login` sin sesión.
-- Destrucción de la sesión después del logout.
-
----
-
-# 📅 Viernes — Aislamiento por usuario
-
-## 🔗 Relación entre usuarios y comercios
-
-Se agregó `user_id` a la tabla `comercios`.
-
-```php
-$table->foreignId('user_id')
-    ->constrained('users')
-    ->onDelete('cascade');
-```
-
-Relación en `User`:
-
-```php
-public function comercios()
+public function index()
 {
-    return $this->hasMany(Comercio::class);
+    $estado = request()->query('estado');
+
+    $transacciones = Transaccion::when(
+        $estado,
+        fn ($query) => $query->where('estado', $estado)
+    )
+        ->latest()
+        ->get();
+
+    return TransaccionResource::collection($transacciones);
 }
 ```
 
-Relación en `Comercio`:
+Ejemplo:
 
-```php
-public function usuario()
+```text
+GET /api/transacciones?estado=Completada
+```
+
+devuelve únicamente transacciones completadas.
+
+Un estado sin coincidencias devuelve:
+
+```json
 {
-    return $this->belongsTo(User::class, 'user_id');
+  "data": []
 }
 ```
 
----
-
-## 🌱 Usuarios de prueba
-
-El `DatabaseSeeder` crea dos usuarios:
-
-```text
-Ana
-ana@taskboard.test
-
-Carlos
-carlos@taskboard.test
-```
-
-Contraseña utilizada:
-
-```text
-password123
-```
-
-Cada usuario posee un comercio distinto:
-
-```text
-Ana → Café Amanecer
-Carlos → Ferretería El Tornillo
-```
+con código `200 OK`.
 
 ---
 
-## 🏪 Comercios aislados por usuario
+# ✅ Códigos HTTP comprobados
 
-El listado de comercios ahora parte del usuario autenticado:
-
-```php
-$comercios = Auth::user()
-    ->comercios()
-    ->withCount('transacciones')
-    ->orderBy('nombre_comercio')
-    ->get();
-```
-
-De esta forma cada usuario solamente puede visualizar sus propios comercios.
+| Código | Significado | Ejemplo |
+|---|---|---|
+| `200` | Petición correcta | GET comercios y transacciones |
+| `201` | Recurso creado | POST transacción válida |
+| `204` | Eliminación correcta sin cuerpo | DELETE |
+| `302` | Redirección | Petición inválida sin Accept JSON |
+| `404` | Recurso inexistente | Comercio o transacción no encontrada |
+| `422` | Error de validación | POST con datos inválidos |
 
 ---
 
-## 🚫 Protección contra acceso por ID
+# 🧪 Pruebas realizadas
 
-Se agregó protección para impedir que un usuario acceda a un comercio ajeno modificando manualmente la URL.
+Se verificaron:
 
-```php
-abort_unless(
-    $comercio->user_id === Auth::id(),
-    404
-);
-```
-
-Por ejemplo:
-
-```text
-Ana → /comercios/1 ✅
-Ana → /comercios/2 ❌ 404
-```
-
----
-
-## 💳 Protección de transacciones
-
-Se creó un método central para autorizar transacciones:
-
-```php
-private function autorizar(Transaccion $transaccion): void
-{
-    abort_unless(
-        $transaccion->comercio->user_id === Auth::id(),
-        404
-    );
-}
-```
-
-La autorización se aplica antes de:
-
-- Mostrar una transacción.
-- Editarla.
-- Actualizarla.
-- Eliminarla.
-- Cambiar su estado.
-
-También se restringió la creación de transacciones a comercios propios.
+- `GET /api/comercios`
+- `GET /api/comercios/1`
+- `GET /api/comercios/999`
+- `GET /api/transacciones`
+- `GET /api/transacciones/1`
+- `POST /api/transacciones` válido
+- `POST /api/transacciones` inválido
+- `DELETE /api/transacciones/{id}`
+- segundo DELETE al mismo ID
+- petición inválida sin `Accept: application/json`
+- filtro `?estado=Completada`
+- filtro sin coincidencias
 
 ---
 
-## ✅ Validación segura de comercio
+# ⚠️ Alcance de seguridad de Semana 13
 
-`GuardarTransaccionRequest` verifica que el comercio exista y además pertenezca al usuario autenticado.
+La API desarrollada esta semana todavía trabaja sin autenticación por token.
 
-```php
-Rule::exists('comercios', 'id')
-    ->where('user_id', $this->user()->id)
-```
+Las rutas de `routes/api.php` no dependen del login web ni de las cookies de sesión implementadas en Semana 12.
 
-Esto evita que alguien modifique manualmente `comercio_id` para registrar o mover información hacia un comercio de otro usuario.
-
----
-
-## 🔄 Cambio de estado protegido
-
-Se conservaron las reglas implementadas durante Semana 11:
-
-```text
-Iniciada → Completada
-Iniciada → Fallida
-Fallida → Iniciada
-Completada → sin transición
-```
-
-Además ahora se verifica primero que la transacción pertenezca al usuario autenticado.
-
----
-
-## 🧪 Pruebas de aislamiento
-
-Se utilizaron dos usuarios y diferentes sesiones para comprobar:
-
-- Ana solamente ve Café Amanecer.
-- Carlos solamente ve Ferretería El Tornillo.
-- Ana no puede abrir el comercio de Carlos.
-- Carlos no puede abrir el comercio de Ana.
-- Una transacción ajena devuelve 404.
-- Una transacción ajena no puede editarse.
-- Una transacción ajena no puede eliminarse.
-- Una transacción ajena no puede cambiar de estado.
-- Las operaciones bloqueadas no modifican los datos.
-- Cada usuario puede crear transacciones en su propio comercio.
-- Sin sesión las rutas protegidas redirigen al login.
-
----
-
-## 🧰 Verificaciones con Tinker
-
-Se realizaron comprobaciones adicionales:
-
-```php
-Auth::attempt([
-    'email' => 'ana@taskboard.test',
-    'password' => 'password123'
-]);
-// true
-```
-
-```php
-Comercio::where(
-    'user_id',
-    User::where('email', 'carlos@taskboard.test')->value('id')
-)->count();
-// 1
-```
-
-```php
-Hash::check('password123', User::first()->password);
-// true
-```
-
----
-
-## 🚦 Protección contra intentos repetidos de login
-
-La ruta POST de login fue protegida con `throttle`:
-
-```php
-Route::post('/login', [AuthController::class, 'login'])
-    ->middleware('throttle:5,1')
-    ->name('login.attempt');
-```
-
-Esto permite un máximo de cinco intentos dentro de un minuto.
-
-En la prueba realizada, el sexto intento incorrecto respondió:
-
-```text
-429 Too Many Requests
-```
-
----
-
-# 🔐 Seguridad implementada
-
-Durante Semana 12 se aplicaron varias medidas de seguridad:
-
-- Contraseñas almacenadas mediante hash.
-- Regeneración del ID de sesión después del login.
-- Invalidación completa de sesión durante logout.
-- Protección CSRF mediante `@csrf`.
-- Middleware `auth` y `guest`.
-- Restricción de recursos por propietario.
-- Respuesta 404 ante recursos ajenos.
-- Validación de `comercio_id` en el servidor.
-- Límite de intentos de login mediante `throttle`.
+La autenticación específica de API mediante tokens se trabajará en la siguiente etapa.
 
 ---
 
@@ -451,32 +286,16 @@ Durante Semana 12 se aplicaron varias medidas de seguridad:
 app/
 ├── Http/
 │   ├── Controllers/
-│   │   ├── AuthController.php
-│   │   ├── ComercioController.php
-│   │   └── TransaccionController.php
-│   └── Requests/
-│       ├── GuardarTransaccionRequest.php
-│       └── RegistroRequest.php
-├── Models/
-│   ├── Comercio.php
-│   ├── Transaccion.php
-│   └── User.php
-
-database/
-├── migrations/
-│   └── *_add_user_id_to_comercios.php
-└── seeders/
-    └── DatabaseSeeder.php
-
-resources/
-└── views/
-    ├── auth/
-    │   ├── login.blade.php
-    │   └── registro.blade.php
-    └── layouts/
-        └── app.blade.php
+│   │   └── Api/
+│   │       └── TransaccionApiController.php
+│   ├── Requests/
+│   │   └── GuardarTransaccionApiRequest.php
+│   └── Resources/
+│       ├── ComercioResource.php
+│       └── TransaccionResource.php
 
 routes/
+├── api.php
 └── web.php
 ```
 
@@ -487,12 +306,12 @@ routes/
 - Laravel
 - PHP 8.2
 - MySQL / MariaDB
-- Blade
 - Eloquent ORM
-- Laravel Authentication
-- Laravel Middleware
+- Laravel API Resources
+- REST
+- JSON
+- Insomnia
 - Form Requests
-- Tinker
 - Git
 - GitHub
 - XAMPP
@@ -504,13 +323,13 @@ routes/
 Clonar el repositorio:
 
 ```bash
-git clone https://github.com/StanleyJv/taskboard-semana12.git
+git clone https://github.com/StanleyJv/taskboard-semana13.git
 ```
 
 Entrar al proyecto:
 
 ```bash
-cd taskboard-semana12
+cd taskboard-semana13
 ```
 
 Instalar dependencias:
@@ -519,31 +338,25 @@ Instalar dependencias:
 composer install
 ```
 
-Configurar el archivo `.env` y crear la base de datos.
-
-Ejecutar migraciones y seeders:
+Configurar `.env`, generar la clave y ejecutar:
 
 ```bash
+php artisan key:generate
 php artisan migrate:fresh --seed
-```
-
-Iniciar el servidor:
-
-```bash
 php artisan serve
 ```
 
-Abrir:
+La API estará disponible en:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8000/api
 ```
 
 ---
 
 # 🔗 Repositorio
 
-https://github.com/StanleyJv/taskboard-semana12
+https://github.com/StanleyJv/taskboard-semana13
 
 ---
 
